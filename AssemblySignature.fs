@@ -85,17 +85,22 @@ type AssemblySignatureGenerator() =
 type GenerateAssemblySignature() =
     inherit Task()
 
-    member val Input: ITaskItem = null with get, set
-    member val Output: ITaskItem = null with get, set
-    member val References: ITaskItem[] = [||] with get, set
-    member val OutputHash = false with get, set
+    let mutable input: ITaskItem = null
+    let mutable output: ITaskItem = null
+    let mutable references: ITaskItem[] = [||]
+    let mutable outputHash = false
+
+    member this.Input with get () = input and set v = input <- v
+    member this.Output with get () = output and set v = output <- v
+    member this.References with get () = references and set v = references <- v
+    member this.OutputHash with get () = outputHash and set v = outputHash <- v
 
     override this.Execute() =
         let domain = AppDomain.CreateDomain("gasig")
 
         try
             let gen = domain.CreateInstanceFromAndUnwrap(typeof<AssemblySignatureGenerator>.Assembly.Location, typeof<AssemblySignatureGenerator>.FullName)
-            (gen :?> AssemblySignatureGenerator).Generate(this.Input.ItemSpec, this.Output.ItemSpec, this.References |> Array.map (fun r -> r.ItemSpec), this.OutputHash)
+            (gen :?> AssemblySignatureGenerator).Generate(input.ItemSpec, output.ItemSpec, references |> Array.map (fun r -> r.ItemSpec), outputHash)
             true
         finally
             AppDomain.Unload(domain)
@@ -103,29 +108,32 @@ type GenerateAssemblySignature() =
 type CopyAssemblySignature() =
     inherit Task()
 
-    member val Input: ITaskItem = null with get, set
-    member val Output: ITaskItem = null with get, set
+    let mutable input: ITaskItem = null
+    let mutable output: ITaskItem = null
+
+    member this.Input with get () = input and set v = input <- v
+    member this.Output with get () = output and set v = output <- v
 
     override this.Execute() =
-        let source = this.Input.ItemSpec
-        let target = this.Output.ItemSpec 
-
         let same =
-            try File.ReadAllText(target) = File.ReadAllText(source)
+            try File.ReadAllText(output.ItemSpec) = File.ReadAllText(input.ItemSpec)
             with e -> false
 
-        if not same then File.Copy(source, target, overwrite = true)
+        if not same then File.Copy(input.ItemSpec, output.ItemSpec, overwrite = true)
 
         true
 
 type GetAssemblySignatureList() =
     inherit Task()
 
-    member val Inputs: ITaskItem[] = [||] with get, set
-    [<Output>] member val Signatures: ITaskItem[] = [||] with get, set
+    let mutable inputs: ITaskItem[] = [||]
+    let mutable signatures: ITaskItem[] = [||]
+
+    member this.Inputs with get () = inputs and set v = inputs <- v
+    [<Output>] member this.Signatures with get () = signatures and set v = signatures <- v
 
     override this.Execute() =
-        this.Signatures <- this.Inputs |> Array.map (fun i -> 
+        signatures <- inputs |> Array.map (fun i -> 
             let sigf = i.ItemSpec + ".sig"
             if File.Exists(sigf) then TaskItem(sigf) :> ITaskItem else i)
 
