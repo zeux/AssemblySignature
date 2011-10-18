@@ -1,4 +1,4 @@
-// fsc fastprintf.fs AssemblySignature.fs /optimize /tailcalls /r:Microsoft.Build.Framework /r:Microsoft.Build.Utilities.v4.0 /target:library
+// fsc AssemblySignature.fs /optimize /tailcalls /r:Microsoft.Build.Framework /r:Microsoft.Build.Utilities.v4.0 /target:library
 module AssemblySignature
 
 open System
@@ -18,44 +18,54 @@ let loadAssembly references (qname: string) =
     | None -> Assembly.ReflectionOnlyLoad(qname)
 
 let md5str (hash: byte array) =
-    hash |> Array.map (sprintf "%02x") |> String.concat ""
+    hash |> Array.map (fun b -> b.ToString("x2")) |> String.concat ""
 
-let outsort fd prefix data =
-    data |> Seq.map (sprintf "%O") |> Seq.sort |> Seq.iter (fprintfn fd "%s%s" prefix)
+let outsort (fd: TextWriter) (prefix: string) data =
+    data
+    |> Seq.toArray
+    |> Array.map (fun x -> x.ToString())
+    |> Array.sort
+    |> Array.iter (fun d ->
+        fd.Write(prefix)
+        fd.WriteLine(d))
 
-let outasm fd (asm: Assembly) =
+let paramsig (m: MethodBase) =
+    m.GetParameters() |> Array.map string |> String.concat ", "
+
+let outasm (fd: TextWriter) (asm: Assembly) =
     asm.GetManifestResourceNames()
     |> Array.filter (fun n -> n.StartsWith("FSharpOptimizationData."))
-    |> Array.iter (fun n -> fprintfn fd "resource %s %s\n" n (MD5.Create().ComputeHash(asm.GetManifestResourceStream(n)) |> md5str))
+    |> Array.iter (fun n -> fd.WriteLine("resource " + n + " " + (MD5.Create().ComputeHash(asm.GetManifestResourceStream(n)) |> md5str) + "\n"))
 
     asm.GetCustomAttributesData() |> outsort fd ""
-    fprintfn fd "assembly %s\n" asm.FullName
+    fd.WriteLine("assembly " + asm.FullName)
+    fd.WriteLine()
 
     for t in asm.GetExportedTypes() |> Array.sortBy (fun t -> t.FullName) do
         t.GetCustomAttributesData() |> outsort fd ""
         if t.IsEnum then
-            fprintfn fd "enum %O: %O = %s" t (t.GetEnumUnderlyingType()) (t.GetEnumNames() |> String.concat ", ")
+            fd.WriteLine("enum " + string t + ": " + string (t.GetEnumUnderlyingType()) + " = " + (t.GetEnumNames() |> String.concat ", "))
         else
-            fprintfn fd "%s %O [%O]" (if t.IsValueType then "struct" else "class") t t.Attributes
-            if t.BaseType <> null then fprintfn fd "\tinherit %O" t.BaseType
+            fd.WriteLine((if t.IsValueType then "struct" else "class") + " " + string t + " " + string t.Attributes)
+            if t.BaseType <> null then fd.WriteLine("\tinherit " + string t.BaseType)
             t.GetInterfaces() |> outsort fd "\tinterface "
 
             t.GetMembers()
             |> Seq.map (fun m ->
                 m,
                 match m with
-                | :? EventInfo as e -> sprintf "e %O" e
-                | :? FieldInfo as f -> sprintf "f %O" f
-                | :? ConstructorInfo as c -> sprintf "c %s(%s)" c.Name (c.GetParameters() |> Array.map string |> String.concat ", ")
-                | :? MethodInfo as m -> sprintf "m %O %s(%s)" m.ReturnType m.Name (m.GetParameters() |> Array.map string |> String.concat ", ")
-                | :? PropertyInfo as p -> sprintf "p %O" p
-                | :? Type as t -> sprintf "t %O" t
+                | :? EventInfo as e -> "e " + string e
+                | :? FieldInfo as f -> "f " + string f
+                | :? ConstructorInfo as c -> "c " + c.Name + "(" + paramsig c + ")"
+                | :? MethodInfo as m -> "m " + string m.ReturnType + " " + m.Name + "(" + paramsig m + ")"
+                | :? PropertyInfo as p -> "p " + string p
+                | :? Type as t -> "t " + string t
                 | x -> failwithf "Unknown member %O" x)
             |> Seq.sortBy snd
             |> Seq.iter (fun (m, s) ->
                 m.GetCustomAttributesData() |> outsort fd "\t"
-                fprintfn fd "\t%s" s)
-        fprintfn fd ""
+                fd.WriteLine("\t" + s))
+        fd.WriteLine()
 
 type ResolveHandlerScope(references) =
     let handler = ResolveEventHandler(fun _ args -> loadAssembly references args.Name)
