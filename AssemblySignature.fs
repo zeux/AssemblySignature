@@ -35,6 +35,17 @@ let paramsig (m: MethodBase) =
         (p.GetCustomAttributesData() |> Seq.map (fun a -> string a + " ") |> String.concat "") + string p)
     |> String.concat ", "
 
+let gensig (args: Type array) =
+    if args.Length > 0 then
+        let constr = seq {
+            for t in args do
+                if t.GenericParameterAttributes <> GenericParameterAttributes.None then
+                    yield string t + ": " + string t.GenericParameterAttributes
+                yield! t.GetGenericParameterConstraints() |> Seq.map (fun c -> string t + ": " + string c) }
+        if Seq.isEmpty constr then ""
+        else " where " + (constr |> String.concat " and ")
+    else ""
+
 let outasm (fd: TextWriter) (asm: Assembly) =
     asm.GetManifestResourceNames()
     |> Array.filter (fun n -> n.StartsWith("FSharpOptimizationData."))
@@ -49,7 +60,7 @@ let outasm (fd: TextWriter) (asm: Assembly) =
         if t.IsEnum then
             fd.WriteLine("enum " + string t + ": " + string (t.GetEnumUnderlyingType()) + " = " + (t.GetEnumNames() |> String.concat ", "))
         else
-            fd.WriteLine((if t.IsValueType then "struct" else "class") + " " + string t + " " + string t.Attributes)
+            fd.WriteLine((if t.IsValueType then "struct" else "class") + " " + string t + " <" + string t.Attributes + ">" + gensig (t.GetGenericArguments()))
             if t.BaseType <> null then fd.WriteLine("\tinherit " + string t.BaseType)
             t.GetInterfaces() |> outsort fd "\tinterface "
 
@@ -60,7 +71,7 @@ let outasm (fd: TextWriter) (asm: Assembly) =
                 | :? EventInfo as e -> "e " + string e
                 | :? FieldInfo as f -> "f " + string f
                 | :? ConstructorInfo as c -> "c " + c.Name + "(" + paramsig c + ")"
-                | :? MethodInfo as m -> "m " + string m.ReturnType + " " + m.Name + "(" + paramsig m + ")"
+                | :? MethodInfo as m -> "m " + string m.ReturnType + " " + m.Name + "(" + paramsig m + ")" + gensig (m.GetGenericArguments())
                 | :? PropertyInfo as p -> "p " + string p
                 | :? Type as t -> "t " + string t
                 | x -> failwithf "Unknown member %O" x)
