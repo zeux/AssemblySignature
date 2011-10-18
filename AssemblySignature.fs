@@ -30,7 +30,10 @@ let outsort (fd: TextWriter) (prefix: string) data =
         fd.WriteLine(d))
 
 let paramsig (m: MethodBase) =
-    m.GetParameters() |> Array.map string |> String.concat ", "
+    m.GetParameters()
+    |> Array.map (fun p ->
+        (p.GetCustomAttributesData() |> Seq.map (fun a -> string a + " ") |> String.concat "") + string p)
+    |> String.concat ", "
 
 let outasm (fd: TextWriter) (asm: Assembly) =
     asm.GetManifestResourceNames()
