@@ -46,7 +46,13 @@ let patchTargetLocal source =
 let HKLM = RegistryKey.OpenBaseKey(RegistryHive.LocalMachine, RegistryView.Registry32)
 
 // patch C# targets file
-patchTargetLocal (HKLM.OpenSubKey(@"SOFTWARE\Microsoft\MSBuild\ToolsVersions\4.0").GetValue("MSBuildToolsPath") :?> string + @"\Microsoft.CSharp.Targets")
+match HKLM.OpenSubKey(@"SOFTWARE\Microsoft\MSBuild\ToolsVersions\4.0") with
+| null -> printfn "Warning: can't find reference to Microsoft.CSharp.Targets in registry, skipping patching"
+| key -> patchTargetLocal (key.GetValue("MSBuildToolsPath") :?> string + @"\Microsoft.CSharp.Targets")
 
 // patch F# targets file
-patchTargetLocal (HKLM.OpenSubKey(@"SOFTWARE\Microsoft\FSharp\3.0\Runtime\v4.0").GetValue("") :?> string + @"\Microsoft.FSharp.Targets")
+let (|??) l r = if l = null then r else l
+
+match HKLM.OpenSubKey(@"SOFTWARE\Microsoft\FSharp\3.0\Runtime\v4.0") |?? HKLM.OpenSubKey(@"SOFTWARE\Microsoft\FSharp\2.0\Runtime\v4.0") with
+| null -> printfn "Warning: can't find reference to Microsoft.FSharp.Targets in registry, skipping patching"
+| key -> patchTargetLocal (key.GetValue("") :?> string + @"\Microsoft.FSharp.Targets")
