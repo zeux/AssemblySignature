@@ -20,6 +20,9 @@ let loadAssembly references (qname: string) =
 let md5str (hash: byte array) =
     hash |> Array.map (fun b -> b.ToString("x2")) |> String.concat ""
 
+let md5 (s: string) =
+    MD5.Create().ComputeHash(s.ToCharArray() |> Array.map byte) |> md5str
+
 let outsort (fd: TextWriter) (prefix: string) data =
     data
     |> Seq.toArray
@@ -46,16 +49,80 @@ let gensig (args: Type array) =
         else " where " + (constr |> String.concat " and ")
     else ""
 
-let outasm (fd: TextWriter) (asm: Assembly) =
+type Access =
+| None = 0
+| Public = 1
+| Internal = 2
+
+let rec getMemberAccess (m: MemberInfo) =
+    match m with
+    | :? EventInfo as e -> Access.Public
+    | :? FieldInfo as f ->
+        match f.Attributes &&& FieldAttributes.FieldAccessMask with
+        | FieldAttributes.PrivateScope -> Access.None
+        | FieldAttributes.Private -> Access.None
+        | FieldAttributes.FamANDAssem -> Access.Internal
+        | FieldAttributes.Assembly -> Access.Internal
+        | FieldAttributes.Family -> Access.Public
+        | FieldAttributes.FamORAssem -> Access.Public
+        | FieldAttributes.Public -> Access.Public
+        | a -> failwithf "Unknown field access %O" a
+    | :? MethodBase as m ->
+        match m.Attributes &&& MethodAttributes.MemberAccessMask with
+        | MethodAttributes.PrivateScope -> Access.None
+        | MethodAttributes.Private -> Access.None
+        | MethodAttributes.FamANDAssem -> Access.Internal
+        | MethodAttributes.Assembly -> Access.Internal
+        | MethodAttributes.Family -> Access.Public
+        | MethodAttributes.FamORAssem -> Access.Public
+        | MethodAttributes.Public -> Access.Public
+        | a -> failwithf "Unknown method access %O" a
+    | :? PropertyInfo as p ->
+        let gm = p.GetGetMethod(nonPublic = true)
+        let sm = p.GetSetMethod(nonPublic = true)
+        max (if gm <> null then getMemberAccess gm else Access.None) (if sm <> null then getMemberAccess sm else Access.None)
+    | :? Type as t ->
+        match t.Attributes &&& TypeAttributes.VisibilityMask with
+        | TypeAttributes.NotPublic -> Access.None
+        | TypeAttributes.Public -> Access.Public
+        | TypeAttributes.NestedPublic -> Access.Public
+        | TypeAttributes.NestedPrivate -> Access.None
+        | TypeAttributes.NestedFamily -> Access.Public
+        | TypeAttributes.NestedAssembly -> Access.Internal
+        | TypeAttributes.NestedFamANDAssem -> Access.Internal
+        | TypeAttributes.NestedFamORAssem -> Access.Public
+        | a -> failwith "Unknown type access %O" a
+    | x -> failwithf "Unknown member %O" x
+
+let outasm (asm: Assembly) =
+    use fdasm = new StringWriter()
+    use fdpub = new StringWriter()
+    use fdint = new StringWriter()
+
+    // fill common assembly info
+    fdasm.WriteLine("assembly " + asm.FullName)
+    asm.GetCustomAttributesData() |> outsort fdasm ""
+    fdasm.WriteLine()
+
     asm.GetManifestResourceNames()
     |> Array.filter (fun n -> n.StartsWith("FSharpOptimizationData."))
-    |> Array.iter (fun n -> fd.WriteLine("resource " + n + " " + (MD5.Create().ComputeHash(asm.GetManifestResourceStream(n)) |> md5str) + "\n"))
+    |> Array.iter (fun n -> fdasm.WriteLine("resource " + n + " " + (MD5.Create().ComputeHash(asm.GetManifestResourceStream(n)) |> md5str)))
 
-    asm.GetCustomAttributesData() |> outsort fd ""
-    fd.WriteLine("assembly " + asm.FullName)
-    fd.WriteLine()
+    // determine if we have to query internal stuff (InternalsVisibleTo)
+    let friend = true
 
-    for t in asm.GetExportedTypes() |> Array.sortBy (fun t -> t.FullName) do
+    // get all appropriate types
+    let types =
+        if friend then
+            asm.GetTypes() |> Array.filter (fun t -> getMemberAccess t <> Access.None)
+        else
+            asm.GetExportedTypes()
+
+    // generate signature for all types
+    for t in types |> Array.sortBy (fun t -> t.FullName) do
+        let fd = if getMemberAccess t = Access.Internal then fdint else fdpub
+
+        fd.WriteLine()
         t.GetCustomAttributesData() |> outsort fd ""
         if t.IsEnum then
             fd.WriteLine("enum " + string t + ": " + string (t.GetEnumUnderlyingType()) + " = " + (t.GetEnumNames() |> String.concat ", "))
@@ -64,22 +131,34 @@ let outasm (fd: TextWriter) (asm: Assembly) =
             if t.BaseType <> null then fd.WriteLine("\tinherit " + string t.BaseType)
             t.GetInterfaces() |> outsort fd "\tinterface "
 
-            t.GetMembers()
-            |> Seq.map (fun m ->
-                m,
-                match m with
-                | :? EventInfo as e -> "e " + string e
-                | :? FieldInfo as f -> "f " + string f
-                | :? ConstructorInfo as c -> "c " + c.Name + "(" + paramsig c + ")"
-                | :? MethodInfo as m -> "m " + string m.ReturnType + " " + m.Name + "(" + paramsig m + ")" + gensig (m.GetGenericArguments())
-                | :? PropertyInfo as p -> "p " + string p
-                | :? Type as t -> "t " + string t
-                | x -> failwithf "Unknown member %O" x)
-            |> Seq.sortBy snd
-            |> Seq.iter (fun (m, s) ->
-                m.GetCustomAttributesData() |> outsort fd "\t"
-                fd.WriteLine("\t" + s))
-        fd.WriteLine()
+            let members = 
+                t.GetMembers(BindingFlags.Instance ||| BindingFlags.Static ||| BindingFlags.Public ||| BindingFlags.NonPublic)
+                |> Seq.choose (fun m ->
+                    let access = getMemberAccess m
+                    if access = Access.Public || (access = Access.Internal && friend) then
+                        Some (access, m,
+                            match m with
+                            | :? EventInfo as e -> "e " + string e
+                            | :? FieldInfo as f -> "f " + string f
+                            | :? ConstructorInfo as c -> "c " + c.Name + "(" + paramsig c + ")"
+                            | :? MethodInfo as m -> "m " + string m.ReturnType + " " + m.Name + "(" + paramsig m + ")" + gensig (m.GetGenericArguments())
+                            | :? PropertyInfo as p -> "p " + string p
+                            | :? Type as t -> "t " + string t
+                            | x -> failwithf "Unknown member %O" x)
+                    else
+                        None)
+                |> Seq.sortBy (fun (a, m, s) -> s)
+
+            if members |> Seq.exists (fun (a, m, s) -> a = Access.Internal) && fd = fdpub then
+                fdint.WriteLine()
+                fdint.WriteLine("type " + string t + " with")
+                
+            for a, m, s in members do
+                let fdm = if a = Access.Internal then fdint else fd
+                m.GetCustomAttributesData() |> outsort fdm "\t"
+                fdm.WriteLine("\t" + s)
+
+    string fdasm, string fdpub, string fdint
 
 type ResolveHandlerScope(references) =
     let handler = ResolveEventHandler(fun _ args -> loadAssembly references args.Name)
@@ -93,18 +172,17 @@ type ResolveHandlerScope(references) =
 type AssemblySignatureGenerator() =
     inherit MarshalByRefObject()
 
-    member this.Generate(input, output: string, references, outputHash) =
+    member this.Generate(input, output: string, references, log) =
         use scope = new ResolveHandlerScope(references)
         let asm = Assembly.ReflectionOnlyLoadFrom(input)
 
-        let fd = new StringWriter()
-        outasm fd asm
+        let sasm, spub, sint = outasm asm
 
-        if outputHash then
-            File.WriteAllText(output, MD5.Create().ComputeHash(fd.ToString().ToCharArray() |> Array.map byte) |> md5str)
-            File.WriteAllText(output + "text", fd.ToString())
-        else
-            File.WriteAllText(output, fd.ToString())
+        File.WriteAllText(output, sprintf "%spublic %s\ninternal %s\n" sasm (md5 spub) (md5 sint))
+        if log then
+            File.WriteAllText(output + "logasm", sasm)
+            File.WriteAllText(output + "logpub", spub)
+            File.WriteAllText(output + "logint", sint)
 
 type GenerateAssemblySignature() =
     inherit Task()
@@ -112,19 +190,19 @@ type GenerateAssemblySignature() =
     let mutable input: ITaskItem = null
     let mutable output: ITaskItem = null
     let mutable references: ITaskItem[] = [||]
-    let mutable outputHash = false
+    let mutable log = false
 
     member this.Input with get () = input and set v = input <- v
     member this.Output with get () = output and set v = output <- v
     member this.References with get () = references and set v = references <- v
-    member this.OutputHash with get () = outputHash and set v = outputHash <- v
+    member this.Log with get () = log and set v = log <- v
 
     override this.Execute() =
         let domain = AppDomain.CreateDomain("gasig")
 
         try
             let gen = domain.CreateInstanceFromAndUnwrap(typeof<AssemblySignatureGenerator>.Assembly.Location, typeof<AssemblySignatureGenerator>.FullName)
-            (gen :?> AssemblySignatureGenerator).Generate(input.ItemSpec, output.ItemSpec, references |> Array.map (fun r -> r.ItemSpec), outputHash)
+            (gen :?> AssemblySignatureGenerator).Generate(input.ItemSpec, output.ItemSpec, references |> Array.map (fun r -> r.ItemSpec), log)
             true
         finally
             AppDomain.Unload(domain)
