@@ -125,6 +125,7 @@ let outputTypeSignature (t: Type) (fdpub: TextWriter) (fdint: TextWriter) hasFri
             t.GetMembers(BindingFlags.Instance ||| BindingFlags.Static ||| BindingFlags.Public ||| BindingFlags.NonPublic)
             |> Array.map (fun m -> getMemberAccess m, m)
             |> Array.filter (fun (a, m) -> a = Access.Public || (a = Access.Internal && hasFriends))
+            |> Array.filter (fun (a, m) -> m.DeclaringType = t || (m.DeclaringType.Assembly <> t.Assembly && not m.DeclaringType.Assembly.GlobalAssemblyCache))
             |> Array.map (fun (a, m) -> a, m, membersig m)
             |> Array.sortBy (fun (a, m, s) -> s)
 
