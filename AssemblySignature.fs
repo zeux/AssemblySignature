@@ -95,7 +95,50 @@ let rec getMemberAccess (m: MemberInfo) =
         | a -> failwith "Unknown type access %O" a
     | x -> failwithf "Unknown member %O" x
 
-let outasm (asm: Assembly) =
+let isSpecialType (t: Type) =
+    // F# auto-generated types for closures
+    t.FullName.Contains("@")
+
+let outputTypeSignature (t: Type) (fdpub: TextWriter) (fdint: TextWriter) friend =
+    let fd = if getMemberAccess t = Access.Internal then fdint else fdpub
+
+    fd.WriteLine()
+    t.GetCustomAttributesData() |> outsort fd ""
+    if t.IsEnum then
+        fd.WriteLine("enum " + string t + ": " + string (t.GetEnumUnderlyingType()) + " = " + (t.GetEnumNames() |> String.concat ", "))
+    else
+        fd.WriteLine((if t.IsValueType then "struct" else "class") + " " + string t + " <" + string t.Attributes + ">" + gensig (t.GetGenericArguments()))
+        if t.BaseType <> null then fd.WriteLine("\tinherit " + string t.BaseType)
+        t.GetInterfaces() |> outsort fd "\tinterface "
+
+        let members = 
+            t.GetMembers(BindingFlags.Instance ||| BindingFlags.Static ||| BindingFlags.Public ||| BindingFlags.NonPublic)
+            |> Seq.choose (fun m ->
+                let access = getMemberAccess m
+                if access = Access.Public || (access = Access.Internal && friend) then
+                    Some (access, m,
+                        match m with
+                        | :? EventInfo as e -> "e " + string e
+                        | :? FieldInfo as f -> "f " + string f
+                        | :? ConstructorInfo as c -> "c " + c.Name + "(" + paramsig c + ")"
+                        | :? MethodInfo as m -> "m " + string m.ReturnType + " " + m.Name + "(" + paramsig m + ")" + gensig (m.GetGenericArguments())
+                        | :? PropertyInfo as p -> "p " + string p
+                        | :? Type as t -> "t " + string t
+                        | x -> failwithf "Unknown member %O" x)
+                else
+                    None)
+            |> Seq.sortBy (fun (a, m, s) -> s)
+
+        if members |> Seq.exists (fun (a, m, s) -> a = Access.Internal) && fd = fdpub then
+            fdint.WriteLine()
+            fdint.WriteLine("type " + string t + " with")
+            
+        for a, m, s in members do
+            let fdm = if a = Access.Internal then fdint else fd
+            m.GetCustomAttributesData() |> outsort fdm "\t"
+            fdm.WriteLine("\t" + s)
+
+let outputAssemblySignature (asm: Assembly) =
     use fdasm = new StringWriter()
     use fdpub = new StringWriter()
     use fdint = new StringWriter()
@@ -120,44 +163,8 @@ let outasm (asm: Assembly) =
             asm.GetExportedTypes()
 
     // generate signature for all types
-    for t in types |> Array.sortBy (fun t -> t.FullName) do
-        let fd = if getMemberAccess t = Access.Internal then fdint else fdpub
-
-        fd.WriteLine()
-        t.GetCustomAttributesData() |> outsort fd ""
-        if t.IsEnum then
-            fd.WriteLine("enum " + string t + ": " + string (t.GetEnumUnderlyingType()) + " = " + (t.GetEnumNames() |> String.concat ", "))
-        else
-            fd.WriteLine((if t.IsValueType then "struct" else "class") + " " + string t + " <" + string t.Attributes + ">" + gensig (t.GetGenericArguments()))
-            if t.BaseType <> null then fd.WriteLine("\tinherit " + string t.BaseType)
-            t.GetInterfaces() |> outsort fd "\tinterface "
-
-            let members = 
-                t.GetMembers(BindingFlags.Instance ||| BindingFlags.Static ||| BindingFlags.Public ||| BindingFlags.NonPublic)
-                |> Seq.choose (fun m ->
-                    let access = getMemberAccess m
-                    if access = Access.Public || (access = Access.Internal && friend) then
-                        Some (access, m,
-                            match m with
-                            | :? EventInfo as e -> "e " + string e
-                            | :? FieldInfo as f -> "f " + string f
-                            | :? ConstructorInfo as c -> "c " + c.Name + "(" + paramsig c + ")"
-                            | :? MethodInfo as m -> "m " + string m.ReturnType + " " + m.Name + "(" + paramsig m + ")" + gensig (m.GetGenericArguments())
-                            | :? PropertyInfo as p -> "p " + string p
-                            | :? Type as t -> "t " + string t
-                            | x -> failwithf "Unknown member %O" x)
-                    else
-                        None)
-                |> Seq.sortBy (fun (a, m, s) -> s)
-
-            if members |> Seq.exists (fun (a, m, s) -> a = Access.Internal) && fd = fdpub then
-                fdint.WriteLine()
-                fdint.WriteLine("type " + string t + " with")
-                
-            for a, m, s in members do
-                let fdm = if a = Access.Internal then fdint else fd
-                m.GetCustomAttributesData() |> outsort fdm "\t"
-                fdm.WriteLine("\t" + s)
+    for t in types |> Array.filter (isSpecialType >> not) |> Array.sortBy (fun t -> t.FullName) do
+        outputTypeSignature t fdpub fdint friend
 
     string fdasm, string fdpub, string fdint
 
@@ -177,7 +184,7 @@ type AssemblySignatureGenerator() =
         use scope = new ResolveHandlerScope(references)
         let asm = Assembly.ReflectionOnlyLoadFrom(input)
 
-        let sasm, spub, sint = outasm asm
+        let sasm, spub, sint = outputAssemblySignature asm
 
         File.WriteAllText(output, sprintf "%spublic %s\ninternal %s\n" sasm (md5 spub) (md5 sint))
         if log then
