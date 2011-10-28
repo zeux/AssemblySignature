@@ -50,6 +50,16 @@ let gensig (args: Type array) =
         else " where " + (constr |> String.concat " and ")
     else ""
 
+let membersig (m: MemberInfo) =
+    match m with
+    | :? EventInfo as e -> "e " + string e
+    | :? FieldInfo as f -> "f " + string f
+    | :? ConstructorInfo as c -> "c " + c.Name + "(" + paramsig c + ")"
+    | :? MethodInfo as m -> "m " + string m.ReturnType + " " + m.Name + "(" + paramsig m + ")" + gensig (m.GetGenericArguments())
+    | :? PropertyInfo as p -> "p " + string p
+    | :? Type as t -> "t " + string t
+    | x -> failwithf "Unknown member %O" x
+
 type Access =
 | None = 0
 | Public = 1
@@ -113,23 +123,12 @@ let outputTypeSignature (t: Type) (fdpub: TextWriter) (fdint: TextWriter) friend
 
         let members = 
             t.GetMembers(BindingFlags.Instance ||| BindingFlags.Static ||| BindingFlags.Public ||| BindingFlags.NonPublic)
-            |> Seq.choose (fun m ->
-                let access = getMemberAccess m
-                if access = Access.Public || (access = Access.Internal && friend) then
-                    Some (access, m,
-                        match m with
-                        | :? EventInfo as e -> "e " + string e
-                        | :? FieldInfo as f -> "f " + string f
-                        | :? ConstructorInfo as c -> "c " + c.Name + "(" + paramsig c + ")"
-                        | :? MethodInfo as m -> "m " + string m.ReturnType + " " + m.Name + "(" + paramsig m + ")" + gensig (m.GetGenericArguments())
-                        | :? PropertyInfo as p -> "p " + string p
-                        | :? Type as t -> "t " + string t
-                        | x -> failwithf "Unknown member %O" x)
-                else
-                    None)
-            |> Seq.sortBy (fun (a, m, s) -> s)
+            |> Array.map (fun m -> getMemberAccess m, m)
+            |> Array.filter (fun (a, m) -> a = Access.Public || (a = Access.Internal && friend))
+            |> Array.map (fun (a, m) -> a, m, membersig m)
+            |> Array.sortBy (fun (a, m, s) -> s)
 
-        if members |> Seq.exists (fun (a, m, s) -> a = Access.Internal) && fd = fdpub then
+        if members |> Array.exists (fun (a, m, s) -> a = Access.Internal) && fd = fdpub then
             fdint.WriteLine()
             fdint.WriteLine("type " + string t + " with")
             
