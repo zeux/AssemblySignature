@@ -109,7 +109,7 @@ let isSpecialType (t: Type) =
     // F# auto-generated types for closures
     t.FullName.Contains("@")
 
-let outputTypeSignature (t: Type) (fdpub: TextWriter) (fdint: TextWriter) friend =
+let outputTypeSignature (t: Type) (fdpub: TextWriter) (fdint: TextWriter) hasFriends =
     let fd = if getMemberAccess t = Access.Internal then fdint else fdpub
 
     fd.WriteLine()
@@ -124,7 +124,7 @@ let outputTypeSignature (t: Type) (fdpub: TextWriter) (fdint: TextWriter) friend
         let members = 
             t.GetMembers(BindingFlags.Instance ||| BindingFlags.Static ||| BindingFlags.Public ||| BindingFlags.NonPublic)
             |> Array.map (fun m -> getMemberAccess m, m)
-            |> Array.filter (fun (a, m) -> a = Access.Public || (a = Access.Internal && friend))
+            |> Array.filter (fun (a, m) -> a = Access.Public || (a = Access.Internal && hasFriends))
             |> Array.map (fun (a, m) -> a, m, membersig m)
             |> Array.sortBy (fun (a, m, s) -> s)
 
@@ -137,8 +137,19 @@ let outputTypeSignature (t: Type) (fdpub: TextWriter) (fdint: TextWriter) friend
             m.GetCustomAttributesData() |> outsort fdm "\t"
             fdm.WriteLine("\t" + s)
 
+let getAssemblyFriends (asm: Assembly) =
+    asm.GetCustomAttributesData()
+    |> Seq.filter (fun a -> a.Constructor.DeclaringType = typeof<InternalsVisibleToAttribute>)
+    |> Seq.map (fun a ->
+        Seq.append a.ConstructorArguments (a.NamedArguments |> Seq.map (fun a -> a.TypedValue))
+        |> Seq.filter (fun v -> v.ArgumentType = typeof<string>)
+        |> Seq.head)
+    |> Seq.map (fun v -> v.Value :?> string)
+    |> Seq.toArray
+
 let outputAssemblySignature (asm: Assembly) =
     use fdasm = new StringWriter()
+    use fdres = new StringWriter()
     use fdpub = new StringWriter()
     use fdint = new StringWriter()
 
@@ -147,25 +158,27 @@ let outputAssemblySignature (asm: Assembly) =
     asm.GetCustomAttributesData() |> outsort fdasm ""
     fdasm.WriteLine()
 
+    // fill resource info
     asm.GetManifestResourceNames()
     |> Array.filter (fun n -> n.StartsWith("FSharpOptimizationData."))
-    |> Array.iter (fun n -> fdasm.WriteLine("resource " + n + " " + (MD5.Create().ComputeHash(asm.GetManifestResourceStream(n)) |> md5str)))
+    |> Array.iter (fun n -> fdres.WriteLine("resource " + n + " " + (MD5.Create().ComputeHash(asm.GetManifestResourceStream(n)) |> md5str)))
 
     // determine if we have to query internal stuff (InternalsVisibleTo)
-    let friend = asm.GetCustomAttributesData() |> Seq.exists (fun a -> a.Constructor.DeclaringType = typeof<InternalsVisibleToAttribute>)
+    let friends = getAssemblyFriends asm
+    let hasFriends = friends.Length > 0
 
     // get all appropriate types
     let types =
-        if friend then
+        if hasFriends then
             asm.GetTypes() |> Array.filter (fun t -> getMemberAccess t <> Access.None)
         else
             asm.GetExportedTypes()
 
     // generate signature for all types
     for t in types |> Array.filter (isSpecialType >> not) |> Array.sortBy (fun t -> t.FullName) do
-        outputTypeSignature t fdpub fdint friend
+        outputTypeSignature t fdpub fdint hasFriends
 
-    string fdasm, string fdpub, string fdint
+    string fdasm, string fdres, string fdpub, string fdint, friends
 
 type ResolveHandlerScope(references) =
     let handler = ResolveEventHandler(fun _ args -> loadAssembly references args.Name)
@@ -183,11 +196,13 @@ type AssemblySignatureGenerator() =
         use scope = new ResolveHandlerScope(references)
         let asm = Assembly.ReflectionOnlyLoadFrom(input)
 
-        let sasm, spub, sint = outputAssemblySignature asm
+        let sasm, sres, spub, sint, friends = outputAssemblySignature asm
+        let intsig = md5 sint
+        let sfriends = friends |> Seq.map (fun v -> sprintf "internal %s %s\n" v intsig) |> String.concat ""
 
-        File.WriteAllText(output, sprintf "%spublic %s\ninternal %s\n" sasm (md5 spub) (md5 sint))
+        File.WriteAllText(output, sprintf "assembly %s %s\n%spublic %s\n%s" asm.FullName (md5 sasm) sres (md5 spub) sfriends)
         if log then
-            File.WriteAllText(output + "logasm", sasm)
+            File.WriteAllText(output + "logasm", sasm + sres)
             File.WriteAllText(output + "logpub", spub)
             File.WriteAllText(output + "logint", sint)
 
