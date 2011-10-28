@@ -5,6 +5,7 @@ open System
 open System.Collections.Generic
 open System.IO
 open System.Reflection
+open System.Runtime.CompilerServices
 open System.Security.Cryptography
 
 open Microsoft.Build.Framework
@@ -109,7 +110,7 @@ let outasm (asm: Assembly) =
     |> Array.iter (fun n -> fdasm.WriteLine("resource " + n + " " + (MD5.Create().ComputeHash(asm.GetManifestResourceStream(n)) |> md5str)))
 
     // determine if we have to query internal stuff (InternalsVisibleTo)
-    let friend = true
+    let friend = asm.GetCustomAttributesData() |> Seq.exists (fun a -> a.Constructor.DeclaringType = typeof<InternalsVisibleToAttribute>)
 
     // get all appropriate types
     let types =
