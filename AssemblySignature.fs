@@ -190,25 +190,22 @@ type ResolveHandlerScope(references) =
         member this.Dispose() =
             AppDomain.CurrentDomain.remove_ReflectionOnlyAssemblyResolve(handler)
 
-type AssemblySignatureGenerator() =
-    inherit MarshalByRefObject()
+let generateAssemblySignature input output references log =
+    use scope = new ResolveHandlerScope(references)
+    let asm = Assembly.ReflectionOnlyLoadFrom(input)
 
-    member this.Generate(input, output: string, references, log) =
-        use scope = new ResolveHandlerScope(references)
-        let asm = Assembly.ReflectionOnlyLoadFrom(input)
+    let sasm, sres, spub, sint, friends = outputAssemblySignature asm
+    let intsig = md5 sint
+    let sfriends = friends |> Seq.map (fun v -> sprintf "internal %s %s\n" v intsig) |> String.concat ""
 
-        let sasm, sres, spub, sint, friends = outputAssemblySignature asm
-        let intsig = md5 sint
-        let sfriends = friends |> Seq.map (fun v -> sprintf "internal %s %s\n" v intsig) |> String.concat ""
-
-        File.WriteAllText(output, sprintf "assembly %s %s\n%spublic %s\n%s" asm.FullName (md5 sasm) sres (md5 spub) sfriends)
-        if log then
-            File.WriteAllText(output + "logasm", sasm + sres)
-            File.WriteAllText(output + "logpub", spub)
-            File.WriteAllText(output + "logint", sint)
+    File.WriteAllText(output, sprintf "assembly %s %s\n%spublic %s\n%s" asm.FullName (md5 sasm) sres (md5 spub) sfriends)
+    if log then
+        File.WriteAllText(output + "logasm", sasm + sres)
+        File.WriteAllText(output + "logpub", spub)
+        File.WriteAllText(output + "logint", sint)
 
 type GenerateAssemblySignature() =
-    inherit Task()
+    inherit AppDomainIsolatedTask()
 
     let mutable input: ITaskItem = null
     let mutable output: ITaskItem = null
@@ -221,14 +218,8 @@ type GenerateAssemblySignature() =
     member this.Log with get () = log and set v = log <- v
 
     override this.Execute() =
-        let domain = AppDomain.CreateDomain("gasig")
-
-        try
-            let gen = domain.CreateInstanceFromAndUnwrap(typeof<AssemblySignatureGenerator>.Assembly.Location, typeof<AssemblySignatureGenerator>.FullName)
-            (gen :?> AssemblySignatureGenerator).Generate(input.ItemSpec, output.ItemSpec, references |> Array.map (fun r -> r.ItemSpec), log)
-            true
-        finally
-            AppDomain.Unload(domain)
+        generateAssemblySignature input.ItemSpec output.ItemSpec (references |> Array.map (fun r -> r.ItemSpec)) log
+        true
 
 type CopyAssemblySignature() =
     inherit Task()
