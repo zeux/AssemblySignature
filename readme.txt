@@ -18,13 +18,19 @@ path to point to the file inside AssemblySignature folder
 How it works:
 
 - After each build a signature file is generated alongside assembly file.
-It works by loading assembly in reflection-only context, and printing all
-public types with all attributes and members.
+It works by loading assembly in reflection-only context, and generating
+MD5 hash for all types with their members, fields, properties, attributes
+and other metadata.
+Two hashes are calculated: one for public types/members and another one
+for internal types/members if the assembly has InternalsVisibleTo attribute.
 For F#, FSharpOptimizationData resource contents is also included in the
 signature, since it contains information for inline functions.
 
-- CoreCompile targets are modified to depend on signature file, if it is
-found alongside the assembly file (this is why Microsoft.*.Targets files
-need to be modified). If signature file is not found, assembly file is
-used instead (i.e. build dependencies are correct even if signature files
-are not generated)
+- Before building the assembly, a dependency file is generated. It consists
+of signatures of all references. If signature file is found alongside the
+assembly, its contents is used with appropriate public/internal handling;
+otherwise file timestamp is used (i.e. build dependencies are correct even
+if signature files are not generated).
+
+- CoreCompile targets are modified to depend on dependency file instead of
+reference files (this is why Microsoft.*.Targets files need to be modified).
