@@ -196,9 +196,9 @@ let generateAssemblySignature input output references writeLog =
 
     let sasm, sres, spub, sint, friends = outputAssemblySignature asm
     let intsig = md5 sint
-    let sfriends = friends |> Seq.map (fun v -> sprintf "internal %s %s\n" v intsig) |> String.concat ""
+    let sfriends = friends |> Seq.map (fun v -> "internal " + v + " " + intsig + "\n") |> String.concat ""
 
-    File.WriteAllText(output, sprintf "assembly %s %s\n%spublic %s\n%s" asm.FullName (md5 sasm) sres (md5 spub) sfriends)
+    File.WriteAllLines(output, [|"assembly " + asm.FullName + " " + md5 sasm; sres.TrimEnd(); "public " + md5 spub; sfriends|])
     if writeLog then
         File.WriteAllText(output + "logasm", sasm + sres)
         File.WriteAllText(output + "logpub", spub)
@@ -219,6 +219,42 @@ type GenerateAssemblySignature() =
 
     override this.Execute() =
         generateAssemblySignature input.ItemSpec output.ItemSpec (references |> Array.map (fun r -> r.ItemSpec)) writeLog
+        true
+
+let getReferenceSignature assembly ref =
+    let sigf = ref + ".sig"
+
+    if File.Exists(sigf) then
+        File.ReadAllLines(sigf)
+        |> Array.filter (fun s -> not (s.StartsWith("internal ")) || s.StartsWith("internal " + assembly + " "))
+    else if File.Exists(ref) then
+        [| "modtime " + File.GetLastWriteTimeUtc(ref).ToFileTimeUtc().ToString() |]
+    else
+        [| "none" |]
+
+let generateAssemblyDependency assembly output references =
+    use fd = new StringWriter()
+
+    for r: string in set references do
+        fd.WriteLine(r)
+        fd.WriteLine(getReferenceSignature assembly r |> Array.map (fun l -> "\t" + l) |> String.concat "\n")
+        fd.WriteLine()
+
+    File.WriteAllText(output, string fd)
+
+type GenerateAssemblyDependency() =
+    inherit Task()
+
+    let mutable assembly: string = null
+    let mutable output: ITaskItem = null
+    let mutable references: ITaskItem[] = [||]
+
+    member this.AssemblyName with get () = assembly and set v = assembly <- v
+    member this.Output with get () = output and set v = output <- v
+    member this.References with get () = references and set v = references <- v
+
+    override this.Execute() =
+        generateAssemblyDependency assembly output.ItemSpec (references |> Array.map (fun i -> i.ItemSpec))
         true
 
 type CopyAssemblySignature() =
