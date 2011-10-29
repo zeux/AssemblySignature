@@ -1,4 +1,4 @@
-// fsc AssemblySignature.fs /optimize /tailcalls /r:Microsoft.Build.Framework /r:Microsoft.Build.Utilities.v4.0 /target:library
+// fsc AssemblySignature.fsi AssemblySignature.fs /optimize /tailcalls /r:Microsoft.Build.Framework /r:Microsoft.Build.Utilities.v4.0 /target:library
 module AssemblySignature
 
 open System
