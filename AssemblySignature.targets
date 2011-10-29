@@ -6,7 +6,7 @@
     <UsingTask TaskName="GetAssemblySignatureList" AssemblyFile="AssemblySignature.dll" />
 
     <Target Name="GenerateAssemblySignature" Inputs="@(IntermediateAssembly)" Outputs="@(IntermediateAssembly->'%(FullPath).sig')" AfterTargets="Compile">
-        <GenerateAssemblySignature Input="@(IntermediateAssembly)" References="@(ReferencePath)" Output="@(IntermediateAssembly->'%(FullPath).sig')" />
+        <GenerateAssemblySignature Input="@(IntermediateAssembly)" References="@(ReferencePath);@(ReferenceDependencyPaths)" Output="@(IntermediateAssembly->'%(FullPath).sig')" />
     </Target>
 
     <Target Name="CopyAssemblySignature" Inputs="@(IntermediateAssembly->'%(FullPath).sig')" Outputs="$(OutputPath)/$(AssemblyName).dll.sig" AfterTargets="GenerateAssemblySignature">
