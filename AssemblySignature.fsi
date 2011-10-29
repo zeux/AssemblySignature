@@ -23,21 +23,3 @@ type GenerateAssemblyDependency =
     member AssemblyName : string with get, set
     member Output : ITaskItem with get, set
     member References : ITaskItem [] with get, set
-
-type CopyAssemblySignature =
-    inherit Task
-
-    new : unit -> CopyAssemblySignature
-    override Execute : unit -> bool
-
-    member Input : ITaskItem with get, set
-    member Output : ITaskItem with get, set
-
-type GetAssemblySignatureList =
-    inherit Task
-
-    new : unit -> GetAssemblySignatureList
-    override Execute : unit -> bool
-
-    member Inputs : ITaskItem [] with get, set
-    [<Output>] member Signatures : ITaskItem [] with get, set

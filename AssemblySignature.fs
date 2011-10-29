@@ -232,6 +232,10 @@ let getReferenceSignature assembly ref =
     else
         [| "none" |]
 
+let writeIfDifferent path data =
+    if File.Exists(path) && File.ReadAllText(path) = data then ()
+    else File.WriteAllText(path, data)
+
 let generateAssemblyDependency assembly output references =
     use fd = new StringWriter()
 
@@ -240,7 +244,7 @@ let generateAssemblyDependency assembly output references =
         fd.WriteLine(getReferenceSignature assembly r |> Array.map (fun l -> "\t" + l) |> String.concat "\n")
         fd.WriteLine()
 
-    File.WriteAllText(output, string fd)
+    writeIfDifferent output (string fd)
 
 type GenerateAssemblyDependency() =
     inherit Task()
@@ -255,38 +259,4 @@ type GenerateAssemblyDependency() =
 
     override this.Execute() =
         generateAssemblyDependency assembly output.ItemSpec (references |> Array.map (fun i -> i.ItemSpec))
-        true
-
-type CopyAssemblySignature() =
-    inherit Task()
-
-    let mutable input: ITaskItem = null
-    let mutable output: ITaskItem = null
-
-    member this.Input with get () = input and set v = input <- v
-    member this.Output with get () = output and set v = output <- v
-
-    override this.Execute() =
-        let same =
-            try File.ReadAllText(output.ItemSpec) = File.ReadAllText(input.ItemSpec)
-            with e -> false
-
-        if not same then File.Copy(input.ItemSpec, output.ItemSpec, overwrite = true)
-
-        true
-
-type GetAssemblySignatureList() =
-    inherit Task()
-
-    let mutable inputs: ITaskItem[] = [||]
-    let mutable signatures: ITaskItem[] = [||]
-
-    member this.Inputs with get () = inputs and set v = inputs <- v
-    [<Output>] member this.Signatures with get () = signatures and set v = signatures <- v
-
-    override this.Execute() =
-        signatures <- inputs |> Array.map (fun i -> 
-            let sigf = i.ItemSpec + ".sig"
-            if File.Exists(sigf) then TaskItem(sigf) :> ITaskItem else i)
-
         true
