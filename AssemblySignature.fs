@@ -190,7 +190,7 @@ type ResolveHandlerScope(references) =
         member this.Dispose() =
             AppDomain.CurrentDomain.remove_ReflectionOnlyAssemblyResolve(handler)
 
-let generateAssemblySignature input output references log =
+let generateAssemblySignature input output references writeLog =
     use scope = new ResolveHandlerScope(references)
     let asm = Assembly.ReflectionOnlyLoadFrom(input)
 
@@ -199,7 +199,7 @@ let generateAssemblySignature input output references log =
     let sfriends = friends |> Seq.map (fun v -> sprintf "internal %s %s\n" v intsig) |> String.concat ""
 
     File.WriteAllText(output, sprintf "assembly %s %s\n%spublic %s\n%s" asm.FullName (md5 sasm) sres (md5 spub) sfriends)
-    if log then
+    if writeLog then
         File.WriteAllText(output + "logasm", sasm + sres)
         File.WriteAllText(output + "logpub", spub)
         File.WriteAllText(output + "logint", sint)
@@ -210,15 +210,15 @@ type GenerateAssemblySignature() =
     let mutable input: ITaskItem = null
     let mutable output: ITaskItem = null
     let mutable references: ITaskItem[] = [||]
-    let mutable log = false
+    let mutable writeLog = false
 
     member this.Input with get () = input and set v = input <- v
     member this.Output with get () = output and set v = output <- v
     member this.References with get () = references and set v = references <- v
-    member this.Log with get () = log and set v = log <- v
+    member this.WriteLog with get () = writeLog and set v = writeLog <- v
 
     override this.Execute() =
-        generateAssemblySignature input.ItemSpec output.ItemSpec (references |> Array.map (fun r -> r.ItemSpec)) log
+        generateAssemblySignature input.ItemSpec output.ItemSpec (references |> Array.map (fun r -> r.ItemSpec)) writeLog
         true
 
 type CopyAssemblySignature() =
