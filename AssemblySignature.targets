@@ -14,6 +14,12 @@
 
     <Target Name="GenerateAssemblyDependency" Inputs="@(ReferencePath)" Outputs="@(AssemblyDependency)" AfterTargets="ResolveReferences" BeforeTargets="CoreCompile">
         <GenerateAssemblyDependency AssemblyName="$(AssemblyName)" References="@(ReferencePath)" Output="@(AssemblyDependency)" />
+        <!--
+        <Message Importance="High" Text="$(AssemblyName) -> @(AssemblyDependency) [@(ReferencePath)]" />
+        <ItemGroup>
+            <ReferencePath Exclude="*" Include="@(AssemblyDependency)" />
+        </ItemGroup>
+        -->
     </Target>
 
     <Target Name="GenerateAssemblySignature" Inputs="@(IntermediateAssembly)" Outputs="@(IntermediateAssemblySignature)" AfterTargets="Compile">
@@ -23,4 +29,9 @@
     <Target Name="CopyAssemblySignature" Inputs="@(IntermediateAssemblySignature)" Outputs="@(OutputAssemblySignature)" AfterTargets="GenerateAssemblySignature">
         <Copy SourceFiles="@(IntermediateAssemblySignature)" DestinationFolder="$(OutDir)" />
     </Target>
+
+    <!--
+    <UsingTask TaskName="Csc" AssemblyFile="AssemblySignature.dll" />
+    <UsingTask TaskName="Fsc" AssemblyFile="AssemblySignature.dll" />
+    -->
 </Project>

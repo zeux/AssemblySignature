@@ -23,3 +23,15 @@ type GenerateAssemblyDependency =
     member AssemblyName : string with get, set
     member Output : ITaskItem with get, set
     member References : ITaskItem [] with get, set
+
+type Csc =
+    inherit Microsoft.Build.Tasks.Csc
+
+    new : unit -> Csc
+    override Execute : unit -> bool
+
+type Fsc =
+    inherit Microsoft.FSharp.Build.Fsc
+
+    new : unit -> Fsc
+    override Execute : unit -> bool

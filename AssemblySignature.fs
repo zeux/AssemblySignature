@@ -218,6 +218,8 @@ type GenerateAssemblySignature() =
     member this.WriteLog with get () = writeLog and set v = writeLog <- v
 
     override this.Execute() =
+        this.Log.LogMessage(MessageImportance.High, "GenerateAssemblySignature {0}", output.ItemSpec)
+
         generateAssemblySignature input.ItemSpec output.ItemSpec (references |> Array.map (fun r -> r.ItemSpec)) writeLog
         true
 
@@ -258,5 +260,45 @@ type GenerateAssemblyDependency() =
     member this.References with get () = references and set v = references <- v
 
     override this.Execute() =
+        this.Log.LogMessage(MessageImportance.High, "GenerateAssemblyDependency {0}", output.ItemSpec)
+
         generateAssemblyDependency assembly output.ItemSpec (references |> Array.map (fun i -> i.ItemSpec))
         true
+
+let getDependencyFileList dep =
+    File.ReadAllLines(dep)
+    |> Array.filter (fun s -> s.Length > 0 && s.[0] <> '\t')
+
+let patchReferenceList (refs: ITaskItem[]) =
+    refs
+    |> Array.collect (fun i ->
+        if Path.GetExtension(i.ItemSpec) = ".dep" then
+            getDependencyFileList i.ItemSpec |> Array.map (fun s -> TaskItem s :> ITaskItem)
+        else
+            [| i |])
+
+type Csc() =
+    inherit Microsoft.Build.Tasks.Csc()
+
+    override this.Execute() =
+        this.Log.LogMessage(MessageImportance.High, "CscProxy< {0}", this.References |> Array.map (fun i -> i.ItemSpec) |> String.concat ";")
+
+        base.References <- patchReferenceList base.References
+
+        this.Log.LogMessage(MessageImportance.High, "CscProxy> {0}", this.References |> Array.map (fun i -> i.ItemSpec) |> String.concat ";")
+
+        base.Execute()
+
+type Fsc() =
+    inherit Microsoft.FSharp.Build.Fsc()
+
+    override this.Execute() =
+        this.Log.LogMessage(MessageImportance.High, "FscProxy< {0}", this.References |> Array.map (fun i -> i.ItemSpec) |> String.concat ";")
+
+        base.References <- patchReferenceList base.References
+
+        this.Log.LogMessage(MessageImportance.High, "FscProxy> {0}", this.References |> Array.map (fun i -> i.ItemSpec) |> String.concat ";")
+
+        base.Execute()
+
+// this.propertyInfo = this.taskType.GetProperty(base.Name, BindingFlags.IgnoreCase | BindingFlags.Instance | BindingFlags.Public | BindingFlags.ExactBinding);
